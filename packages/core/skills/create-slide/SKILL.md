@@ -92,12 +92,12 @@ slides.
 ```jsonc
 {
   "folders": [
-    { "id": "f-1a2b3c4d", "name": "Adopción",  "icon": { "type": "color", "value": "#2e6f8e" } },
-    { "id": "f-5e6f7a8b", "name": "Brasil",    "icon": { "type": "color", "value": "#3a8a5f" }, "parentId": "f-1a2b3c4d" },
-    { "id": "f-9c0d1e2f", "name": "MAIA",      "icon": { "type": "color", "value": "#8e5a2e" }, "parentId": "f-5e6f7a8b" }
+    { "id": "f-1a2b3c4d", "name": "Testing",  "icon": { "type": "color", "value": "#2e6f8e" } },
+    { "id": "f-5e6f7a8b", "name": "Spain",    "icon": { "type": "color", "value": "#3a8a5f" }, "parentId": "f-1a2b3c4d" },
+    { "id": "f-9c0d1e2f", "name": "Portugal",      "icon": { "type": "color", "value": "#8e5a2e" }, "parentId": "f-5e6f7a8b" }
   ],
   "assignments": {
-    "maia-brasil": "f-9c0d1e2f"
+    "spain-madrid": "f-9c0d1e2f"
   }
 }
 ```
@@ -107,7 +107,7 @@ slides.
   - `icon` is `{ "type": "color", "value": "#rrggbb" }` or `{ "type": "emoji", "value": "📁" }`.
   - **`parentId`** (optional) nests this folder **under** another folder by its `id`.
     Omit it (or set `null`) for a top-level folder. **Nesting is multi-level**:
-    `Adopción › Brasil › MAIA` is `MAIA.parentId → Brasil`, `Brasil.parentId → Adopción`.
+    `Spain › Madrid › Test` is `Test.parentId → Madrid`, `Madrid.parentId → Spain`.
 - **`assignments`** — maps a **slide id → exactly one folder id**. A slide whose id
   is absent here (or points to a non-existent folder) shows under **Draft** (unassigned).
   A deck belongs to **one** folder only — never list it under several.
@@ -120,8 +120,8 @@ folders**. The folder's count (sidebar and header) is **recursive** (own + desce
 
 Consequence: **assign each deck to the most specific (leaf) folder it belongs to.**
 It will still surface when the user browses any ancestor. Example: a Brazil-specific
-MAIA deck goes in `MAIA`, and it appears when browsing `MAIA`, `Brasil`, *and*
-`Adopción` — no need (and don't) duplicate the assignment upward.
+Test deck goes in `Test`, and it appears when browsing `Test`, `Spain`, *and*
+`Spain` — no need (and don't) duplicate the assignment upward.
 
 ### What to do
 
