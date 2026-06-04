@@ -1,9 +1,13 @@
-import { MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
+import { ChevronRight, FolderInput, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -64,9 +68,14 @@ type Row =
       onRename: (name: string) => void;
       onChangeIcon: (icon: FolderIcon) => void;
       onDelete: () => void;
+      onMove: (parentId: string | null) => void;
+      allFolders: Folder[];
     }
   | {
       kind: 'draft';
+    }
+  | {
+      kind: 'all';
     }
   | {
       kind: 'themes';
@@ -75,16 +84,112 @@ type Row =
       kind: 'assets';
     };
 
+function isDescendant(candidateId: string, rootId: string, all: Folder[]): boolean {
+  let current: string | null | undefined = candidateId;
+  const seen = new Set<string>();
+  while (current) {
+    if (seen.has(current)) return false;
+    seen.add(current);
+    if (current === rootId) return true;
+    const parent = all.find((f) => f.id === current)?.parentId;
+    current = parent ?? null;
+  }
+  return false;
+}
+
+function buildChildrenByParent(all: Folder[]): Map<string | null, Folder[]> {
+  const m = new Map<string | null, Folder[]>();
+  for (const f of all) {
+    const p = f.parentId ?? null;
+    const list = m.get(p) ?? [];
+    list.push(f);
+    m.set(p, list);
+  }
+  return m;
+}
+
+/**
+ * Recursively renders the "Move under" targets as nested submenus: a folder with
+ * children becomes a flyout containing a "Move into <name>" item plus its own
+ * children. The moved folder and its subtree are skipped (they can't be targets
+ * without creating a cycle).
+ */
+function MoveTargetItems({
+  parentId,
+  all,
+  childrenByParent,
+  movedId,
+  currentParentId,
+  onMove,
+}: {
+  parentId: string | null;
+  all: Folder[];
+  childrenByParent: Map<string | null, Folder[]>;
+  movedId: string;
+  currentParentId: string | null;
+  onMove: (parentId: string | null) => void;
+}) {
+  const kids = (childrenByParent.get(parentId) ?? []).filter((f) => f.id !== movedId);
+  return (
+    <>
+      {kids.map((f) => {
+        if (isDescendant(f.id, movedId, all)) return null;
+        const current = currentParentId === f.id;
+        const grandKids = (childrenByParent.get(f.id) ?? []).filter((c) => c.id !== movedId);
+        if (grandKids.length === 0) {
+          return (
+            <DropdownMenuItem key={f.id} disabled={current} onSelect={() => onMove(f.id)}>
+              <FolderIconChip icon={f.icon} />
+              <span className="truncate">{f.name}</span>
+            </DropdownMenuItem>
+          );
+        }
+        return (
+          <DropdownMenuSub key={f.id}>
+            <DropdownMenuSubTrigger>
+              <FolderIconChip icon={f.icon} />
+              <span className="truncate">{f.name}</span>
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="max-h-[300px] min-w-[180px] overflow-y-auto">
+              <DropdownMenuItem disabled={current} onSelect={() => onMove(f.id)}>
+                <FolderInput />
+                <span className="truncate">Move into {f.name}</span>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <MoveTargetItems
+                parentId={f.id}
+                all={all}
+                childrenByParent={childrenByParent}
+                movedId={movedId}
+                currentParentId={currentParentId}
+                onMove={onMove}
+              />
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        );
+      })}
+    </>
+  );
+}
+
 export function FolderItem({
   row,
   count,
   selected,
+  depth = 0,
+  hasChildren = false,
+  expanded = false,
+  onToggleExpand,
   onSelect,
   onDropSlide,
 }: {
   row: Row;
   count: number;
   selected: boolean;
+  depth?: number;
+  hasChildren?: boolean;
+  expanded?: boolean;
+  onToggleExpand?: () => void;
   onSelect: () => void;
   onDropSlide: (slideId: string) => void;
 }) {
@@ -95,7 +200,7 @@ export function FolderItem({
   const slideDragActive = useSlideDragActive();
   const t = useLocale();
 
-  const acceptsSlideDrop = row.kind !== 'themes' && row.kind !== 'assets';
+  const acceptsSlideDrop = row.kind !== 'themes' && row.kind !== 'assets' && row.kind !== 'all';
   const isSlideDrag = (e: React.DragEvent) =>
     acceptsSlideDrop && e.dataTransfer.types.includes(SLIDE_DND_MIME);
   const handleDragEnter = (e: React.DragEvent) => {
@@ -126,19 +231,23 @@ export function FolderItem({
   const icon: FolderIcon =
     row.kind === 'draft'
       ? { type: 'emoji', value: '📝' }
-      : row.kind === 'themes'
-        ? { type: 'emoji', value: '🎨' }
-        : row.kind === 'assets'
-          ? { type: 'emoji', value: '🗂️' }
-          : row.folder.icon;
+      : row.kind === 'all'
+        ? { type: 'emoji', value: '📚' }
+        : row.kind === 'themes'
+          ? { type: 'emoji', value: '🎨' }
+          : row.kind === 'assets'
+            ? { type: 'emoji', value: '🗂️' }
+            : row.folder.icon;
   const label =
     row.kind === 'draft'
       ? t.home.draft
-      : row.kind === 'themes'
-        ? t.home.themes
-        : row.kind === 'assets'
-          ? t.home.assets
-          : row.folder.name;
+      : row.kind === 'all'
+        ? t.home.allSlides
+        : row.kind === 'themes'
+          ? t.home.themes
+          : row.kind === 'assets'
+            ? t.home.assets
+            : row.folder.name;
 
   const commitRename = () => {
     if (row.kind !== 'folder') return;
@@ -146,6 +255,8 @@ export function FolderItem({
     if (trimmed && trimmed !== row.folder.name) row.onRename(trimmed);
     setRenaming(false);
   };
+
+  const isFolder = row.kind === 'folder';
 
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: drag-and-drop target wraps interactive children
@@ -159,11 +270,30 @@ export function FolderItem({
         dragOver &&
           'bg-brand/10 text-foreground ring-1 ring-brand ring-offset-1 ring-offset-sidebar motion-safe:scale-[1.01] motion-safe:transition-transform',
       )}
+      style={isFolder && depth > 0 ? { paddingLeft: `${8 + depth * 12}px` } : undefined}
       onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
+      {isFolder &&
+        (hasChildren ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleExpand?.();
+            }}
+            aria-label={expanded ? 'Collapse' : 'Expand'}
+            className="-ml-1 flex size-4 shrink-0 items-center justify-center rounded text-foreground/50 transition-transform hover:bg-foreground/10 hover:text-foreground"
+            style={{ transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
+          >
+            <ChevronRight className="size-3" />
+          </button>
+        ) : (
+          <span className="-ml-1 inline-block size-4 shrink-0" aria-hidden />
+        ))}
+
       {row.kind === 'folder' && import.meta.env.DEV ? (
         <Popover>
           <PopoverTrigger asChild>
@@ -245,6 +375,29 @@ export function FolderItem({
               <Pencil />
               {t.common.rename}
             </DropdownMenuItem>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <FolderInput />
+                Move under
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="max-h-[300px] min-w-[180px] overflow-y-auto">
+                <DropdownMenuItem
+                  disabled={(row.folder.parentId ?? null) === null}
+                  onSelect={() => row.onMove(null)}
+                >
+                  <span className="inline-block size-3 shrink-0" aria-hidden />
+                  <span className="text-muted-foreground">(Top level)</span>
+                </DropdownMenuItem>
+                <MoveTargetItems
+                  parentId={null}
+                  all={row.allFolders}
+                  childrenByParent={buildChildrenByParent(row.allFolders)}
+                  movedId={row.folder.id}
+                  currentParentId={row.folder.parentId ?? null}
+                  onMove={row.onMove}
+                />
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
             <DropdownMenuItem variant="destructive" onSelect={() => row.onDelete()}>
               <Trash2 />
               {t.common.delete}

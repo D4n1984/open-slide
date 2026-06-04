@@ -41,6 +41,7 @@ export const en: Locale = {
     duplicate: 'Duplicate',
     themes: 'Themes',
     assets: 'Assets',
+    allSlides: 'All slides',
     folders: 'Folders',
     newFolder: 'New folder',
     folderName: 'Folder name',

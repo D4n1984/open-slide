@@ -41,6 +41,7 @@ export const zhCN: Locale = {
     duplicate: '复制',
     themes: '主题',
     assets: '素材',
+    allSlides: '所有幻灯片',
     folders: '文件夹',
     newFolder: '新建文件夹',
     folderName: '文件夹名称',

@@ -80,11 +80,67 @@ Read the **`slide-authoring`** skill before writing — it covers the file contr
 
 Run the checklist in `slide-authoring` ("Self-review before finishing"). It covers structural correctness, layout discipline, and asset existence.
 
-## Step 8 — Hand off to the user
+## Step 8 — Place the deck in a folder (optional)
+
+Decks are organized into **folders** via the manifest `slides/.folders.json`. This
+is the **one file outside `slides/<id>/` you may edit** — and only to organize
+decks. Still never touch `package.json`, `open-slide.config.ts`, themes, or other
+slides.
+
+### How `slides/.folders.json` works
+
+```jsonc
+{
+  "folders": [
+    { "id": "f-1a2b3c4d", "name": "Adopción",  "icon": { "type": "color", "value": "#2e6f8e" } },
+    { "id": "f-5e6f7a8b", "name": "Brasil",    "icon": { "type": "color", "value": "#3a8a5f" }, "parentId": "f-1a2b3c4d" },
+    { "id": "f-9c0d1e2f", "name": "MAIA",      "icon": { "type": "color", "value": "#8e5a2e" }, "parentId": "f-5e6f7a8b" }
+  ],
+  "assignments": {
+    "maia-brasil": "f-9c0d1e2f"
+  }
+}
+```
+
+- **`folders[]`** — each folder is `{ id, name, icon, parentId? }`.
+  - `id` is `f-` followed by 8 lowercase hex chars (e.g. `f-1a2b3c4d`). Must be unique.
+  - `icon` is `{ "type": "color", "value": "#rrggbb" }` or `{ "type": "emoji", "value": "📁" }`.
+  - **`parentId`** (optional) nests this folder **under** another folder by its `id`.
+    Omit it (or set `null`) for a top-level folder. **Nesting is multi-level**:
+    `Adopción › Brasil › MAIA` is `MAIA.parentId → Brasil`, `Brasil.parentId → Adopción`.
+- **`assignments`** — maps a **slide id → exactly one folder id**. A slide whose id
+  is absent here (or points to a non-existent folder) shows under **Draft** (unassigned).
+  A deck belongs to **one** folder only — never list it under several.
+
+### How decks are listed (important — assign to the LEAF folder)
+
+Selecting a folder in the home view shows its **own** decks first, then — grouped
+by subfolder, depth-first, under a separator — the decks of **all its descendant
+folders**. The folder's count (sidebar and header) is **recursive** (own + descendants).
+
+Consequence: **assign each deck to the most specific (leaf) folder it belongs to.**
+It will still surface when the user browses any ancestor. Example: a Brazil-specific
+MAIA deck goes in `MAIA`, and it appears when browsing `MAIA`, `Brasil`, *and*
+`Adopción` — no need (and don't) duplicate the assignment upward.
+
+### What to do
+
+- **Default: leave the deck unassigned (Draft).** Don't edit `.folders.json` unless
+  the user asks for a folder. After hand-off, the user can drag it into a folder in
+  the dev UI.
+- **If the user names a target folder:** find it in `folders` by `name`, then add
+  `"<slide-id>": "<folder-id>"` to `assignments`. If the target folder (or an
+  intermediate level of the path) doesn't exist yet, create it in `folders` with a
+  fresh unique `f-xxxxxxxx` id and set `parentId` to build the path. Confirm the
+  full path with the user before writing when you had to create folders.
+- Preserve existing `folders` and `assignments` entries — only add/update.
+
+## Step 9 — Hand off to the user
 
 Tell the user:
 
 - The slide id and file path you created.
+- Which folder it was assigned to (or that it's in Draft, unassigned).
 - That the dev server will hot-reload — they can open `http://localhost:5173/s/<id>` (or refresh the home page).
 - If dev isn't running: `pnpm dev` from the repo root.
 

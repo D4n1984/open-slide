@@ -41,6 +41,7 @@ export type Locale = {
     duplicate: string;
     themes: string;
     assets: string;
+    allSlides: string;
     folders: string;
     newFolder: string;
     folderName: string;
