@@ -6,7 +6,7 @@ import { useFolders } from '@/lib/folders';
 import { format, useLocale } from '@/lib/use-locale';
 import { cn } from '@/lib/utils';
 import { MobileFolderPill } from '../components/sidebar/mobile-pill';
-import { ASSETS_ID, DRAFT_ID, Sidebar, THEMES_ID } from '../components/sidebar/sidebar';
+import { ALL_ID, ASSETS_ID, DRAFT_ID, Sidebar, THEMES_ID } from '../components/sidebar/sidebar';
 import type { FoldersManifest } from '../lib/sdk';
 import { slideIds } from '../lib/slides';
 import { themes as themeRegistry } from '../lib/themes';
@@ -88,8 +88,32 @@ export function HomeShell() {
     return { draftSlides: draft, slidesByFolder: byFolder };
   }, [manifest]);
 
-  const countFor = (folderId: string | null) =>
-    folderId === null ? draftSlides.length : (slidesByFolder[folderId]?.length ?? 0);
+  const childrenByParent = useMemo(() => {
+    const map = new Map<string | null, string[]>();
+    for (const f of manifest.folders) {
+      const p = f.parentId ?? null;
+      const list = map.get(p) ?? [];
+      list.push(f.id);
+      map.set(p, list);
+    }
+    return map;
+  }, [manifest]);
+
+  const countFor = (folderId: string | null) => {
+    if (folderId === null) return draftSlides.length;
+    let total = slidesByFolder[folderId]?.length ?? 0;
+    const stack = [...(childrenByParent.get(folderId) ?? [])];
+    const seen = new Set<string>();
+    while (stack.length) {
+      const id = stack.pop() as string;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      total += slidesByFolder[id]?.length ?? 0;
+      const kids = childrenByParent.get(id);
+      if (kids) stack.push(...kids);
+    }
+    return total;
+  };
 
   const moveSlideWithToast = useCallback(
     async (slideId: string, folderId: string | null) => {
@@ -129,6 +153,7 @@ export function HomeShell() {
         <Sidebar
           folders={manifest.folders}
           countFor={countFor}
+          allCount={slideIds.length}
           themesCount={themeRegistry.length}
           assetsCount={globalAssets.length}
           selectedId={selectedId}
@@ -146,6 +171,7 @@ export function HomeShell() {
               toast.error(t.home.toastFolderDeleteFailed);
             }
           }}
+          onMove={(id, parentId) => update(id, { parentId })}
           onDropToFolder={(folderId, slideId) => moveSlideWithToast(slideId, folderId)}
           onDropToDraft={(slideId) => moveSlideWithToast(slideId, null)}
           onReorder={async (ids) => {
@@ -170,6 +196,13 @@ export function HomeShell() {
               count={countFor(null)}
               active={selectedId === DRAFT_ID}
               onClick={() => selectFolder(DRAFT_ID)}
+            />
+            <MobileFolderPill
+              icon={{ type: 'emoji', value: '📚' }}
+              label={t.home.allSlides}
+              count={slideIds.length}
+              active={selectedId === ALL_ID}
+              onClick={() => selectFolder(ALL_ID)}
             />
             <MobileFolderPill
               icon={{ type: 'emoji', value: '🎨' }}

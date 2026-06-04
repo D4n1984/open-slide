@@ -1,6 +1,7 @@
 import {
   ArrowDownAZ,
   ChevronDown,
+  ChevronRight,
   Clock,
   Copy,
   FolderInput,
@@ -12,7 +13,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useOutletContext } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -33,11 +34,11 @@ import {
 import { format, useLocale } from '@/lib/use-locale';
 import { cn } from '@/lib/utils';
 import { FolderIconChip, SLIDE_DND_MIME } from '../components/sidebar/folder-item';
-import { DRAFT_ID } from '../components/sidebar/sidebar';
+import { ALL_ID, DRAFT_ID } from '../components/sidebar/sidebar';
 import { SlideCanvas } from '../components/slide-canvas';
 import { SlidePageProvider } from '../lib/page-context';
 import type { Folder, FolderIcon, SlideModule } from '../lib/sdk';
-import { loadSlide, slideCreatedAt } from '../lib/slides';
+import { loadSlide, slideCreatedAt, slideIds } from '../lib/slides';
 import type { HomeOutletContext } from './home-shell';
 
 type SortKey = 'created-desc' | 'created-asc' | 'title-asc' | 'title-desc';
@@ -69,6 +70,38 @@ function useSortPref(): [SortKey, (next: SortKey) => void] {
 
 const TITLE_COLLATOR = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
 
+function filterSlides(
+  list: string[],
+  trimmedQuery: string,
+  titleMap: Record<string, string>,
+): string[] {
+  if (!trimmedQuery) return list;
+  return list.filter((id) => {
+    if (id.toLowerCase().includes(trimmedQuery)) return true;
+    const tl = titleMap[id]?.toLowerCase();
+    return tl ? tl.includes(trimmedQuery) : false;
+  });
+}
+
+function sortSlides(list: string[], sortKey: SortKey, titleMap: Record<string, string>): string[] {
+  const sorted = list.slice();
+  const titleOf = (id: string) => titleMap[id] ?? id;
+  switch (sortKey) {
+    case 'title-asc':
+      sorted.sort((a, b) => TITLE_COLLATOR.compare(titleOf(a), titleOf(b)));
+      break;
+    case 'title-desc':
+      sorted.sort((a, b) => TITLE_COLLATOR.compare(titleOf(b), titleOf(a)));
+      break;
+    case 'created-asc':
+      sorted.sort((a, b) => (slideCreatedAt[a] ?? 0) - (slideCreatedAt[b] ?? 0));
+      break;
+    default:
+      sorted.sort((a, b) => (slideCreatedAt[b] ?? 0) - (slideCreatedAt[a] ?? 0));
+  }
+  return sorted;
+}
+
 export function Home() {
   const {
     manifest,
@@ -85,45 +118,102 @@ export function Home() {
   } = useOutletContext<HomeOutletContext>();
   const t = useLocale();
 
-  const selectedFolder =
-    selectedId === DRAFT_ID ? null : (manifest.folders.find((f) => f.id === selectedId) ?? null);
-  const visibleSlides = selectedId === DRAFT_ID ? draftSlides : (slidesByFolder[selectedId] ?? []);
-
-  const title = selectedFolder?.name ?? t.home.draft;
-  const headerIcon = selectedFolder?.icon ?? { type: 'emoji' as const, value: '📝' };
   const isDraft = selectedId === DRAFT_ID;
+  const isAll = selectedId === ALL_ID;
+
+  const selectedFolder =
+    isDraft || isAll ? null : (manifest.folders.find((f) => f.id === selectedId) ?? null);
+
+  const title = isAll ? t.home.allSlides : (selectedFolder?.name ?? t.home.draft);
+  const headerIcon: FolderIcon = isAll
+    ? { type: 'emoji', value: '📚' }
+    : (selectedFolder?.icon ?? { type: 'emoji', value: '📝' });
 
   const [query, setQuery] = useState('');
   const [sortKey, setSortKey] = useSortPref();
 
-  const trimmedQuery = query.trim().toLowerCase();
-  const filteredSlides = useMemo(() => {
-    if (!trimmedQuery) return visibleSlides;
-    return visibleSlides.filter((id) => {
-      if (id.toLowerCase().includes(trimmedQuery)) return true;
-      const tl = titleMap[id]?.toLowerCase();
-      return tl ? tl.includes(trimmedQuery) : false;
-    });
-  }, [visibleSlides, titleMap, trimmedQuery]);
-  const sortedSlides = useMemo(() => {
-    const list = filteredSlides.slice();
-    const titleOf = (id: string) => titleMap[id] ?? id;
-    switch (sortKey) {
-      case 'title-asc':
-        list.sort((a, b) => TITLE_COLLATOR.compare(titleOf(a), titleOf(b)));
-        break;
-      case 'title-desc':
-        list.sort((a, b) => TITLE_COLLATOR.compare(titleOf(b), titleOf(a)));
-        break;
-      case 'created-asc':
-        list.sort((a, b) => (slideCreatedAt[a] ?? 0) - (slideCreatedAt[b] ?? 0));
-        break;
-      default:
-        list.sort((a, b) => (slideCreatedAt[b] ?? 0) - (slideCreatedAt[a] ?? 0));
+  // Slides shown for this view: the draft bucket lists unassigned slides, the
+  // "All slides" bucket lists every slide, a folder lists its directly-assigned
+  // slides (descendants are added as separate sections below).
+  const ownSlides = isDraft ? draftSlides : isAll ? slideIds : (slidesByFolder[selectedId] ?? []);
+
+  // Descendant folders of the selected folder, in depth-first order, each with
+  // its relative depth. The draft bucket has no descendants.
+  const descendantFolders = useMemo(() => {
+    if (selectedId === DRAFT_ID) return [] as { folder: Folder; depth: number }[];
+    const childrenByParent = new Map<string | null, Folder[]>();
+    for (const f of manifest.folders) {
+      const parent = f.parentId ?? null;
+      const list = childrenByParent.get(parent) ?? [];
+      list.push(f);
+      childrenByParent.set(parent, list);
     }
-    return list;
-  }, [filteredSlides, sortKey, titleMap]);
+    const out: { folder: Folder; depth: number }[] = [];
+    const walk = (parentId: string, depth: number) => {
+      for (const folder of childrenByParent.get(parentId) ?? []) {
+        out.push({ folder, depth });
+        walk(folder.id, depth + 1);
+      }
+    };
+    walk(selectedId, 1);
+    return out;
+  }, [manifest, selectedId]);
+
+  // Ordered render sections: own slides first, then one section per descendant
+  // folder that actually holds slides.
+  const sections = useMemo(() => {
+    const result: { key: string; folder: Folder | null; depth: number; slides: string[] }[] = [];
+    result.push({ key: '__own__', folder: selectedFolder, depth: 0, slides: ownSlides });
+    for (const { folder, depth } of descendantFolders) {
+      const slides = slidesByFolder[folder.id] ?? [];
+      if (slides.length > 0) result.push({ key: folder.id, folder, depth, slides });
+    }
+    return result;
+  }, [selectedFolder, ownSlides, descendantFolders, slidesByFolder]);
+
+  const allSlides = useMemo(() => sections.flatMap((s) => s.slides), [sections]);
+
+  const trimmedQuery = query.trim().toLowerCase();
   const isSearching = trimmedQuery.length > 0;
+
+  // When searching, flatten everything into a single ranked result list.
+  const flatResults = useMemo(
+    () => sortSlides(filterSlides(allSlides, trimmedQuery, titleMap), sortKey, titleMap),
+    [allSlides, trimmedQuery, titleMap, sortKey],
+  );
+
+  const renderCard = (id: string) => (
+    <li key={id}>
+      <SlideCard
+        id={id}
+        folders={manifest.folders}
+        currentFolderId={manifest.assignments[id] ?? null}
+        onRename={(name) => renameSlide(id, name)}
+        onDuplicate={async () => {
+          const slideName = titleMap[id] ?? id;
+          try {
+            const newSlideId = await duplicateSlide(id);
+            toast.success(
+              format(t.home.toastSlideDuplicated, {
+                slide: slideName,
+                newSlide: newSlideId,
+              }),
+            );
+          } catch {
+            toast.error(t.home.toastSlideDuplicateFailed);
+          }
+        }}
+        onMove={(folderId) => assign(id, folderId)}
+        onDelete={() => deleteSlide(id)}
+        onTitleResolved={reportTitle}
+      />
+    </li>
+  );
+
+  const gridClass =
+    'grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-x-6 gap-y-9 md:grid-cols-[repeat(auto-fill,minmax(300px,1fr))]';
+
+  const hasDescendantSections = sections.length > 1;
 
   return (
     <>
@@ -135,13 +225,9 @@ export function Home() {
           </h1>
           {!loading && (
             <span className="folio ml-1 self-end pb-2">
-              {(isSearching ? filteredSlides.length : visibleSlides.length)
-                .toString()
-                .padStart(2, '0')}
+              {(isSearching ? flatResults.length : allSlides.length).toString().padStart(2, '0')}
               {isSearching && (
-                <span className="opacity-40">
-                  /{visibleSlides.length.toString().padStart(2, '0')}
-                </span>
+                <span className="opacity-40">/{allSlides.length.toString().padStart(2, '0')}</span>
               )}
             </span>
           )}
@@ -154,40 +240,49 @@ export function Home() {
 
       {loading ? (
         <HomeLoading />
-      ) : visibleSlides.length === 0 ? (
+      ) : allSlides.length === 0 ? (
         <EmptyState isDraft={isDraft} folderName={selectedFolder?.name} />
-      ) : filteredSlides.length === 0 ? (
-        <NoResultsState query={query} onClear={() => setQuery('')} />
+      ) : isSearching ? (
+        flatResults.length === 0 ? (
+          <NoResultsState query={query} onClear={() => setQuery('')} />
+        ) : (
+          <ul className={gridClass}>{flatResults.map(renderCard)}</ul>
+        )
       ) : (
-        <ul className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-x-6 gap-y-9 md:grid-cols-[repeat(auto-fill,minmax(300px,1fr))]">
-          {sortedSlides.map((id) => (
-            <li key={id}>
-              <SlideCard
-                id={id}
-                folders={manifest.folders}
-                currentFolderId={manifest.assignments[id] ?? null}
-                onRename={(name) => renameSlide(id, name)}
-                onDuplicate={async () => {
-                  const slideName = titleMap[id] ?? id;
-                  try {
-                    const newSlideId = await duplicateSlide(id);
-                    toast.success(
-                      format(t.home.toastSlideDuplicated, {
-                        slide: slideName,
-                        newSlide: newSlideId,
-                      }),
-                    );
-                  } catch {
-                    toast.error(t.home.toastSlideDuplicateFailed);
-                  }
-                }}
-                onMove={(folderId) => assign(id, folderId)}
-                onDelete={() => deleteSlide(id)}
-                onTitleResolved={reportTitle}
-              />
-            </li>
-          ))}
-        </ul>
+        <div className="flex flex-col">
+          {sections.map((section, index) => {
+            const sorted = sortSlides(section.slides, sortKey, titleMap);
+            const isOwn = section.key === '__own__';
+            if (isOwn && sorted.length === 0) return null;
+            return (
+              <section key={section.key}>
+                {!isOwn && (
+                  <div
+                    className={cn(
+                      'flex items-center gap-2.5',
+                      // Separator before the first descendant section.
+                      index === 1 && hasDescendantSections && ownSlides.length > 0
+                        ? 'mt-10 border-t border-hairline pt-8'
+                        : 'mt-9',
+                      'mb-5',
+                    )}
+                    style={
+                      section.depth > 1
+                        ? { paddingLeft: `${(section.depth - 1) * 14}px` }
+                        : undefined
+                    }
+                  >
+                    <FolderIconChip icon={section.folder?.icon ?? { type: 'emoji', value: '📁' }} />
+                    <span className="eyebrow">{section.folder?.name}</span>
+                    <span className="h-px flex-1 bg-hairline" aria-hidden />
+                    <span className="folio">{sorted.length.toString().padStart(2, '0')}</span>
+                  </div>
+                )}
+                <ul className={gridClass}>{sorted.map(renderCard)}</ul>
+              </section>
+            );
+          })}
+        </div>
       )}
     </>
   );
@@ -655,14 +750,58 @@ function MoveDialog({
 }) {
   const [selected, setSelected] = useState<string | null>(currentFolderId);
   const [submitting, setSubmitting] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const t = useLocale();
 
   useEffect(() => {
     if (open) {
       setSelected(currentFolderId);
       setSubmitting(false);
+      // Start fully collapsed each time the dialog opens, so a deep tree is easy
+      // to scan and navigate into.
+      setExpanded(new Set());
     }
   }, [open, currentFolderId]);
+
+  const childrenByParent = useMemo(() => {
+    const m = new Map<string | null, Folder[]>();
+    for (const f of folders) {
+      const p = f.parentId ?? null;
+      const list = m.get(p) ?? [];
+      list.push(f);
+      m.set(p, list);
+    }
+    return m;
+  }, [folders]);
+
+  const toggleExpand = (id: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const renderFolderOptions = (parentId: string | null, depth: number): ReactNode[] =>
+    (childrenByParent.get(parentId) ?? []).flatMap((f) => {
+      const hasChildren = (childrenByParent.get(f.id) ?? []).length > 0;
+      const isExpanded = expanded.has(f.id);
+      const node = (
+        <FolderOption
+          key={f.id}
+          icon={f.icon}
+          label={f.name}
+          depth={depth}
+          hasChildren={hasChildren}
+          expanded={isExpanded}
+          onToggle={() => toggleExpand(f.id)}
+          active={selected === f.id}
+          onClick={() => setSelected(f.id)}
+        />
+      );
+      return hasChildren && isExpanded ? [node, ...renderFolderOptions(f.id, depth + 1)] : [node];
+    });
 
   const submit = async () => {
     if (selected === currentFolderId) {
@@ -696,15 +835,7 @@ function MoveDialog({
             active={selected === null}
             onClick={() => setSelected(null)}
           />
-          {folders.map((f) => (
-            <FolderOption
-              key={f.id}
-              icon={f.icon}
-              label={f.name}
-              active={selected === f.id}
-              onClick={() => setSelected(f.id)}
-            />
-          ))}
+          {renderFolderOptions(null, 0)}
         </div>
         <DialogFooter>
           <Button variant="ghost" size="sm" onClick={() => onOpenChange(false)}>
@@ -724,31 +855,60 @@ function FolderOption({
   label,
   active,
   onClick,
+  depth = 0,
+  hasChildren = false,
+  expanded = false,
+  onToggle,
 }: {
   icon: FolderIcon;
   label: string;
   active: boolean;
   onClick: () => void;
+  depth?: number;
+  hasChildren?: boolean;
+  expanded?: boolean;
+  onToggle?: () => void;
 }) {
   const tOpt = useLocale();
   return (
-    <button
-      type="button"
-      onClick={onClick}
+    <div
+      style={{ paddingLeft: `${8 + depth * 16}px` }}
       className={cn(
-        'flex w-full items-center gap-2 border-b border-hairline px-3 py-2 text-left text-[13px] transition-colors last:border-b-0',
+        'flex w-full items-center gap-1 border-b border-hairline text-[13px] transition-colors last:border-b-0',
         active ? 'bg-muted text-foreground' : 'hover:bg-muted/60',
       )}
     >
-      <FolderIconChip icon={icon} />
-      <span className="truncate">{label}</span>
-      {active && (
-        <span className="ml-auto inline-flex items-center gap-1 text-[10.5px] text-brand">
-          <span className="inline-block size-1 rounded-full bg-brand" aria-hidden />
-          {tOpt.common.selected}
-        </span>
+      {hasChildren ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggle?.();
+          }}
+          aria-label={expanded ? 'Collapse' : 'Expand'}
+          className="flex size-5 shrink-0 items-center justify-center rounded text-foreground/50 transition-transform hover:bg-foreground/10 hover:text-foreground"
+          style={{ transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
+        >
+          <ChevronRight className="size-3.5" />
+        </button>
+      ) : (
+        <span className="inline-block size-5 shrink-0" aria-hidden />
       )}
-    </button>
+      <button
+        type="button"
+        onClick={onClick}
+        className="flex min-w-0 flex-1 items-center gap-2 py-2 pr-3 text-left"
+      >
+        <FolderIconChip icon={icon} />
+        <span className="truncate">{label}</span>
+        {active && (
+          <span className="ml-auto inline-flex shrink-0 items-center gap-1 text-[10.5px] text-brand">
+            <span className="inline-block size-1 rounded-full bg-brand" aria-hidden />
+            {tOpt.common.selected}
+          </span>
+        )}
+      </button>
+    </div>
   );
 }
 

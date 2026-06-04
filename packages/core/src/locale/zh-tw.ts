@@ -41,6 +41,7 @@ export const zhTW: Locale = {
     duplicate: '複製',
     themes: '主題',
     assets: '素材',
+    allSlides: '所有投影片',
     folders: '資料夾',
     newFolder: '新增資料夾',
     folderName: '資料夾名稱',

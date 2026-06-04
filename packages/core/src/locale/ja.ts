@@ -41,6 +41,7 @@ export const ja: Locale = {
     duplicate: '複製',
     themes: 'テーマ',
     assets: 'アセット',
+    allSlides: 'すべてのスライド',
     folders: 'フォルダ',
     newFolder: '新規フォルダ',
     folderName: 'フォルダ名',
